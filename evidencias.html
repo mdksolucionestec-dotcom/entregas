@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1080">
+<title>Evidencias y firmas</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-row">
+    <button class="back" onclick="atras()" aria-label="Atrás">‹</button>
+    <div class="htxt">
+      <h1>Evidencias y firmas</h1>
+      <div class="sub" id="hSub">—</div>
+    </div>
+  </div>
+  <div class="prog">
+    <div class="pstep done"><div class="pbar"></div><div class="plabel">Datos y partidas</div></div>
+    <div class="pstep on"><div class="pbar"></div><div class="plabel">Evidencias y firmas</div></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="banners"></div>
+  <div id="bloques"></div>
+
+  <div class="card">
+    <h2><span class="ic">📝</span>Observaciones generales</h2>
+    <p class="hint">Lo que la Secretaría quiera dejar asentado sobre la entrega.</p>
+    <div class="field">
+      <textarea id="obs" placeholder="Opcional…" oninput="setObsGen(this.value)"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">✍️</span>Firmas</h2>
+    <p class="hint">Firma con el dedo. Si prefieren firmar en papel, deja el recuadro vacío
+      e imprime el acta: las líneas de firma salen igual.</p>
+
+    <div class="field">
+      <label>Por MDreieck — <span id="lblEntrega">quien entrega</span></label>
+      <div class="firma-box"><canvas id="cvEntrega"></canvas></div>
+      <div class="firma-acts">
+        <button onclick="limpiarFirma('Entrega')">Borrar</button>
+        <button id="okEntrega" onclick="guardarFirma('Entrega')">Guardar firma</button>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:16px">
+      <label>Por la Secretaría — <span id="lblRecibe">quien recibe</span></label>
+      <div class="firma-box"><canvas id="cvRecibe"></canvas></div>
+      <div class="firma-acts">
+        <button onclick="limpiarFirma('Recibe')">Borrar</button>
+        <button id="okRecibe" onclick="guardarFirma('Recibe')">Guardar firma</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="fileInputs"></div>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <button class="btn btn-send btn-block" id="sendBtn" onclick="enviar()">📤 Enviar acta a Drive</button>
+    <div class="nav-sec">
+      <button class="btn btn-ghost" onclick="atras()">‹ Datos</button>
+      <button class="btn btn-ghost" onclick="verPDF()">📄 Ver acta</button>
+    </div>
+  </div>
+</nav>
+
+<div class="sending" id="sendOv">
+  <div class="send-box" id="sendBox">
+    <div class="spin"></div>
+    <div class="check-ic" id="checkIc">✓</div>
+    <h3 id="sendTitle">Procesando…</h3>
+    <p id="sendMsg">Un momento.</p>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+const id=sessionStorage.getItem('mdk_acta_id');
+let a=getActa(id);
+if(!a){ window.location.href='index.html'; }
+const urls={};
+
+function renderBanners(){
+  const c=document.getElementById('banners');
+  let h='';
+  if(!online()) h=`<div class="banner off"><span class="b-ic">📴</span>
+    <span>Modo sin conexión. Puedes intentar enviar: si no hay red, queda pendiente.</span></div>`;
+  else if(a.enviado) h=`<div class="banner info"><span class="b-ic">✓</span>
+    <span>Enviada el ${fmtFecha((a.fechaEnvio||'').slice(0,10))}. Puedes reenviarla si agregas algo.</span></div>`;
+  else if(a.listoParaEnviar) h=`<div class="banner pend"><span class="b-ic">🔄</span>
+    <span>Quedó pendiente de envío. Ya hay señal: pulsa "Enviar acta a Drive".</span></div>`;
+  c.innerHTML=h;
+}
+
+/* ---------- bloques de captura ---------- */
+function grupos(){
+  if(a.modalidad==='general') return [{pid:null,tit:'Evidencia del sitio'}];
+  const ps=a.partidas||[];
+  if(!ps.length) return [];
+  return ps.map((p,i)=>({pid:p.id,tit:'Partida '+(i+1)+': '+(p.concepto||'sin concepto')}));
+}
+
+function render(){
+  document.getElementById('hSub').textContent=a.folio+'  ·  '+(a.sitio||'');
+  document.getElementById('obs').value=a.observaciones||'';
+  document.getElementById('lblEntrega').textContent=a.entregaNom||'quien entrega';
+  document.getElementById('lblRecibe').textContent=a.recibeNom||'quien recibe';
+  renderBanners();
+
+  const gs=grupos();
+  const cont=document.getElementById('bloques');
+  if(!gs.length){
+    cont.innerHTML=`<div class="card"><div class="empty" style="padding:30px 10px">
+      <div class="em-ic">📦</div><h3>Sin partidas</h3>
+      <p>Regresa y agrega al menos una partida para poder subir fotos por equipo.</p></div></div>`;
+    document.getElementById('fileInputs').innerHTML='';
+    return;
+  }
+  cont.innerHTML=gs.map(g=>{
+    const key=g.pid||'gen';
+    const etapas=ETAPAS.map(e=>{
+      const n=fotosDe(a,g.pid,e.id).length;
+      return `<div class="etapa">
+        <div class="etapa-h">
+          <span class="e-nom">${e.nom}</span>
+          <span class="e-n">${n}</span>
+        </div>
+        <div class="etapa-b">
+          <p class="e-desc">${e.desc}</p>
+          <div class="cap-btns">
+            <button class="pill" onclick="document.getElementById('cam_${key}_${e.id}').click()">
+              <span class="p-ic">📷</span><span>Cámara</span></button>
+            <button class="pill" onclick="document.getElementById('gal_${key}_${e.id}').click()">
+              <span class="p-ic">🖼️</span><span>Galería</span></button>
+          </div>
+          <div class="medios" id="med_${key}_${e.id}"></div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="card">
+      <h2><span class="ic">📸</span>${esc(g.tit)}</h2>
+      ${etapas}</div>`;
+  }).join('');
+
+  document.getElementById('fileInputs').innerHTML=gs.map(g=>{
+    const key=g.pid||'gen';
+    return ETAPAS.map(e=>`
+      <input class="hidden-input" type="file" accept="image/*" capture="environment"
+        id="cam_${key}_${e.id}" onchange="capturar(this,'${g.pid||''}','${e.id}')">
+      <input class="hidden-input" type="file" accept="image/*" multiple
+        id="gal_${key}_${e.id}" onchange="capturar(this,'${g.pid||''}','${e.id}')">`).join('');
+  }).join('');
+
+  gs.forEach(g=>ETAPAS.forEach(e=>pintarMedios(g.pid,e.id)));
+  cargarFirmas();
+}
+
+/* ---------- captura ---------- */
+async function capturar(input,pid,etapa){
+  const files=Array.from(input.files||[]);
+  if(!files.length) return;
+  mostrar('Guardando…','Procesando '+files.length+(files.length===1?' foto.':' fotos.'));
+  for(const f of files){
+    const blob=await comprimirFoto(f);
+    if(!blob) continue;
+    const mid='m_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+    try{ await idbPut({id:mid,actaId:a.id,blob}); }
+    catch(e){ alert('No se pudo guardar la foto.'); continue; }
+    const n=(a.medios||[]).length+1;
+    a.medios=a.medios||[];
+    a.medios.push({id:mid,partidaId:pid||null,etapa,comentario:'',size:blob.size,
+      ts:new Date().toISOString(),
+      name:etapa+'_'+String(n).padStart(2,'0')+'_'+a.folio+'.jpg'});
+    guardarActa(a);
+  }
+  input.value='';
+  ocultar();
+  pintarMedios(pid||null,etapa);
+  actualizarConteo(pid||null,etapa);
+}
+
+async function pintarMedios(pid,etapa){
+  const key=pid||'gen';
+  const cont=document.getElementById('med_'+key+'_'+etapa);
+  if(!cont) return;
+  const fs=fotosDe(a,pid,etapa);
+  if(!fs.length){ cont.innerHTML=''; return; }
+  const partes=[];
+  for(const m of fs){
+    if(!urls[m.id]){
+      const rec=await idbGet(m.id);
+      urls[m.id]= rec&&rec.blob ? URL.createObjectURL(rec.blob) : '';
+    }
+    partes.push(`<div class="medio">
+      <div class="medio-top">
+        <img src="${urls[m.id]}" alt="">
+        <button class="medio-del" onclick="eliminar('${m.id}','${pid||''}','${etapa}')" aria-label="Eliminar">✕</button>
+      </div>
+      <div class="medio-body">
+        <textarea placeholder="Pie de imagen: qué se ve en esta foto…"
+          oninput="setPie('${m.id}',this.value)">${esc(m.comentario)}</textarea>
+        <div class="medio-info">${esc(m.name)} · ${fmtSize(m.size||0)}</div>
+      </div>
+    </div>`);
+  }
+  cont.innerHTML=partes.join('');
+}
+function actualizarConteo(pid,etapa){
+  const key=pid||'gen';
+  const cont=document.getElementById('med_'+key+'_'+etapa);
+  if(!cont) return;
+  const badge=cont.closest('.etapa').querySelector('.e-n');
+  if(badge) badge.textContent=fotosDe(a,pid,etapa).length;
+}
+function setPie(mid,v){
+  const m=(a.medios||[]).find(x=>x.id===mid);
+  if(m){ m.comentario=v; guardarActa(a); }
+}
+async function eliminar(mid,pid,etapa){
+  if(!confirm('¿Eliminar esta foto?')) return;
+  try{ await idbDel(mid); }catch(e){}
+  if(urls[mid]){ URL.revokeObjectURL(urls[mid]); delete urls[mid]; }
+  a.medios=(a.medios||[]).filter(m=>m.id!==mid);
+  guardarActa(a);
+  pintarMedios(pid||null,etapa);
+  actualizarConteo(pid||null,etapa);
+}
+function setObsGen(v){ a.observaciones=v; guardarActa(a); }
+
+/* ---------- firmas ---------- */
+const firmas={};
+function initCanvas(rol){
+  const cv=document.getElementById('cv'+rol);
+  const r=cv.getBoundingClientRect();
+  cv.width=Math.round(r.width*2); cv.height=Math.round(r.height*2);
+  const cx=cv.getContext('2d');
+  cx.scale(2,2); cx.lineWidth=2; cx.lineCap='round'; cx.lineJoin='round';
+  cx.strokeStyle='#1b1830';
+  let pintando=false, vacio=true;
+  const pos=e=>{
+    const b=cv.getBoundingClientRect();
+    const t=e.touches?e.touches[0]:e;
+    return {x:t.clientX-b.left, y:t.clientY-b.top};
+  };
+  const start=e=>{ e.preventDefault(); pintando=true; vacio=false;
+    const p=pos(e); cx.beginPath(); cx.moveTo(p.x,p.y); };
+  const move=e=>{ if(!pintando) return; e.preventDefault();
+    const p=pos(e); cx.lineTo(p.x,p.y); cx.stroke(); };
+  const end=()=>{ pintando=false; };
+  cv.addEventListener('mousedown',start); cv.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',end);
+  cv.addEventListener('touchstart',start,{passive:false});
+  cv.addEventListener('touchmove',move,{passive:false});
+  cv.addEventListener('touchend',end);
+  firmas[rol]={cv,cx,estaVacio:()=>vacio,marcarVacio:()=>{vacio=true;}};
+}
+function limpiarFirma(rol){
+  const f=firmas[rol]; if(!f) return;
+  f.cx.clearRect(0,0,f.cv.width,f.cv.height);
+  f.marcarVacio();
+  a['firma'+rol]=''; guardarActa(a);
+  document.getElementById('ok'+rol).classList.remove('firma-ok');
+  document.getElementById('ok'+rol).textContent='Guardar firma';
+}
+function guardarFirma(rol){
+  const f=firmas[rol]; if(!f) return;
+  if(f.estaVacio()){ alert('Primero firma en el recuadro.'); return; }
+  a['firma'+rol]=f.cv.toDataURL('image/png');
+  guardarActa(a);
+  const b=document.getElementById('ok'+rol);
+  b.classList.add('firma-ok'); b.textContent='✓ Firma guardada';
+}
+function cargarFirmas(){
+  ['Entrega','Recibe'].forEach(rol=>{
+    if(!firmas[rol]) initCanvas(rol);
+    const d=a['firma'+rol];
+    if(d){
+      const im=new Image();
+      im.onload=()=>{ const f=firmas[rol];
+        f.cx.clearRect(0,0,f.cv.width,f.cv.height);
+        f.cx.drawImage(im,0,0,f.cv.width/2,f.cv.height/2); };
+      im.src=d;
+      const b=document.getElementById('ok'+rol);
+      b.classList.add('firma-ok'); b.textContent='✓ Firma guardada';
+    }
+  });
+}
+
+/* ---------- overlay ---------- */
+function mostrar(t,m,estado){
+  const box=document.getElementById('sendBox');
+  box.classList.toggle('done',!!estado);
+  const ic=document.getElementById('checkIc');
+  ic.textContent=estado==='err'?'⚠️':'✓';
+  ic.style.color=estado==='err'?'#c62828':'#1f9d55';
+  document.getElementById('sendTitle').textContent=t;
+  document.getElementById('sendMsg').textContent=m;
+  document.getElementById('sendOv').classList.add('on');
+}
+function ocultar(){ document.getElementById('sendOv').classList.remove('on'); }
+
+async function verPDF(){
+  mostrar('Generando acta…','Armando el documento.');
+  try{
+    const doc=await generarActaPDF(a,mostrar);
+    if(doc) doc.save(nombrePDF(a));
+  }catch(e){ mostrar('No se pudo generar','('+(e.message||e)+')','err');
+    setTimeout(ocultar,3000); return; }
+  ocultar();
+}
+
+async function enviar(){
+  if(!(a.partidas||[]).length && a.modalidad==='partida'){
+    alert('Agrega al menos una partida antes de enviar.'); return; }
+  if(!a.entregaNom || !a.recibeNom){
+    if(!confirm('Faltan los nombres de quien entrega o quien recibe.\n¿Enviar de todas formas?')) return; }
+  const btn=document.getElementById('sendBtn'); btn.disabled=true;
+  try{
+    await enviarActa(a,mostrar);
+    a.enviado=true; a.listoParaEnviar=false; a.fechaEnvio=new Date().toISOString();
+    guardarActa(a);
+    mostrar('¡Acta enviada!', CONFIGURADO
+      ? 'Carpeta creada en Drive con el acta en PDF y las fotos.'
+      : 'PDF descargado. Falta configurar la URL del Apps Script.',true);
+    setTimeout(()=>{ window.location.href='index.html'; },2300);
+  }catch(err){
+    a.listoParaEnviar=true; guardarActa(a);
+    mostrar('Quedó pendiente de envío',
+      'No se pudo conectar. Todo está guardado y el PDF se descargó. Inténtalo con señal.','err');
+    btn.disabled=false; renderBanners();
+    setTimeout(ocultar,4200);
+  }
+}
+
+function atras(){ guardarActa(a); window.location.href='acta.html'; }
+
+window.addEventListener('online',renderBanners);
+window.addEventListener('offline',renderBanners);
+window.addEventListener('beforeunload',()=>{ Object.values(urls).forEach(u=>u&&URL.revokeObjectURL(u)); });
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1080">
+<title>Datos del acta</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-row">
+    <button class="back" onclick="salir()" aria-label="Atrás">‹</button>
+    <div class="htxt">
+      <h1>Datos del acta</h1>
+      <div class="sub" id="hSub">—</div>
+    </div>
+  </div>
+  <div class="prog">
+    <div class="pstep on"><div class="pbar"></div><div class="plabel">Datos y partidas</div></div>
+    <div class="pstep"><div class="pbar"></div><div class="plabel">Evidencias y firmas</div></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="banners"></div>
+
+  <div class="card">
+    <h2><span class="ic">📍</span>Lugar y momento de la entrega</h2>
+    <div class="field"><label>Domicilio del sitio</label>
+      <input id="f_direccion" placeholder="Calle, número, colonia, municipio" oninput="set('direccion',this.value)"></div>
+    <div class="row2">
+      <div class="field"><label>Fecha de entrega</label>
+        <input id="f_fecha" type="date" oninput="set('fecha',this.value)"></div>
+      <div class="field"><label>Hora</label>
+        <input id="f_hora" type="time" oninput="set('hora',this.value)"></div>
+    </div>
+    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="obtenerGPS()">
+      🛰️ <span id="gpsTxt">Obtener ubicación</span></button>
+    <div class="gps-box">
+      <div class="gps-vals">
+        <div class="gps-v"><div class="lbl">LATITUD</div><div class="val" id="vLat">—</div></div>
+        <div class="gps-v"><div class="lbl">LONGITUD</div><div class="val" id="vLon">—</div></div>
+      </div>
+      <div class="gps-meta" id="gpsMeta">Sin ubicación capturada</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">✍️</span>Quiénes intervienen</h2>
+    <p class="hint">Estos nombres aparecen al calce del acta, junto a las firmas.</p>
+    <div class="field"><label>Entrega por MDreieck — nombre</label>
+      <input id="f_entregaNom" placeholder="Nombre completo" oninput="set('entregaNom',this.value)"></div>
+    <div class="field"><label>Entrega — cargo</label>
+      <input id="f_entregaCargo" placeholder="Ej. Supervisor de instalación" oninput="set('entregaCargo',this.value)"></div>
+    <div class="field"><label>Recibe por la Secretaría — nombre</label>
+      <input id="f_recibeNom" placeholder="Nombre completo" oninput="set('recibeNom',this.value)"></div>
+    <div class="field"><label>Recibe — cargo</label>
+      <input id="f_recibeCargo" placeholder="Ej. Enlace operativo" oninput="set('recibeCargo',this.value)"></div>
+    <div class="field"><label>Identificación de quien recibe</label>
+      <input id="f_recibeIdent" placeholder="Credencial, gafete, número" oninput="set('recibeIdent',this.value)"></div>
+    <div class="row2">
+      <div class="field"><label>Testigo 1</label>
+        <input id="f_testigo1" placeholder="Nombre" oninput="set('testigo1',this.value)"></div>
+      <div class="field"><label>Testigo 2</label>
+        <input id="f_testigo2" placeholder="Nombre" oninput="set('testigo2',this.value)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="ic">📦</span>Bienes entregados<span class="n" id="nPart">0</span></h2>
+    <p class="hint">Una partida por cada equipo o concepto que se entrega. Marca "Con observaciones"
+      si algo no quedó conforme: eso queda asentado en el acta.</p>
+    <div id="partidas"></div>
+    <button class="btn btn-ghost btn-block" onclick="agregarPartida()">＋ Agregar partida</button>
+  </div>
+</main>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <button class="btn btn-primary btn-block" onclick="siguiente()">Continuar a evidencias ›</button>
+    <div class="nav-sec">
+      <button class="btn btn-ghost" onclick="salir()">‹ Guardar y salir</button>
+    </div>
+  </div>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+<script>
+const id=sessionStorage.getItem('mdk_acta_id');
+let a=getActa(id);
+if(!a){ window.location.href='index.html'; }
+
+function set(k,v){ a[k]=v; guardarActa(a); }
+
+function renderBanners(){
+  document.getElementById('banners').innerHTML = online() ? '' :
+    `<div class="banner off"><span class="b-ic">📴</span>
+      <span>Modo sin conexión. Todo se guarda en el teléfono.</span></div>`;
+}
+
+function render(){
+  document.getElementById('hSub').textContent = a.folio+'  ·  '+(a.sitio||'');
+  renderBanners();
+  ['direccion','fecha','hora','entregaNom','entregaCargo','recibeNom','recibeCargo',
+   'recibeIdent','testigo1','testigo2'].forEach(k=>{
+    const el=document.getElementById('f_'+k); if(el && a[k]!=null) el.value=a[k];
+  });
+  pintarGPS(); renderPartidas();
+}
+
+/* ---------- GPS ---------- */
+function pintarGPS(){
+  const g=a.gps||{};
+  document.getElementById('vLat').textContent = g.lat ? Number(g.lat).toFixed(6) : '—';
+  document.getElementById('vLon').textContent = g.lon ? Number(g.lon).toFixed(6) : '—';
+  const m=document.getElementById('gpsMeta');
+  if(g.ts) m.textContent='Precisión ±'+(g.acc?Math.round(g.acc):'?')+' m · '+
+    new Date(g.ts).toLocaleString('es-MX',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  else m.textContent='Sin ubicación capturada';
+}
+function obtenerGPS(){
+  const t=document.getElementById('gpsTxt');
+  if(!navigator.geolocation){ alert('Este dispositivo no permite ubicación.'); return; }
+  t.textContent='Buscando señal…';
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const c=pos.coords;
+    a.gps={lat:c.latitude.toFixed(6),lon:c.longitude.toFixed(6),
+      altitud:(c.altitude!=null?String(Math.round(c.altitude)):''),
+      acc:c.accuracy,ts:new Date().toISOString()};
+    guardarActa(a); pintarGPS(); t.textContent='Actualizar ubicación';
+    if(!a.direccion){
+      const d=await direccionDesdeCoords(a.gps.lat,a.gps.lon);
+      if(d){ a.direccion=d; guardarActa(a); document.getElementById('f_direccion').value=d; }
+    }
+  }, err=>{
+    t.textContent='Obtener ubicación';
+    alert('No se pudo obtener la ubicación ('+err.message+'). Activa el GPS.');
+  },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+
+/* ---------- partidas ---------- */
+function renderPartidas(){
+  const cont=document.getElementById('partidas');
+  const ps=a.partidas||[];
+  document.getElementById('nPart').textContent=ps.length;
+  if(!ps.length){
+    cont.innerHTML='<div class="sin-medios">Aún no hay partidas. Agrega la primera abajo.</div>';
+    return;
+  }
+  const opc=CONCEPTOS_SUG.map(c=>`<option value="${esc(c)}">`).join('');
+  const uni=UNIDADES.map(u=>`<option>${esc(u)}</option>`).join('');
+  cont.innerHTML='<datalist id="dlConceptos">'+opc+'</datalist>'+ps.map((p,i)=>{
+    const nf=(a.medios||[]).filter(m=>m.partidaId===p.id).length;
+    return `<div class="partida${p.estado==='Con observaciones'?' obs':''}" id="pt_${p.id}">
+      <div class="p-head">
+        <span class="p-num">${i+1}</span>
+        <span class="p-tit">${esc(p.concepto||'Sin concepto')}</span>
+        <button class="p-del" onclick="borrarPartida('${p.id}')" aria-label="Eliminar">🗑</button>
+      </div>
+      <div class="field"><label>Concepto / bien entregado</label>
+        <input list="dlConceptos" value="${esc(p.concepto)}"
+          placeholder="Ej. Equipo PA800 SX" oninput="setP('${p.id}','concepto',this.value)"></div>
+      <div class="row3">
+        <div class="field"><label>Cantidad</label>
+          <input inputmode="decimal" value="${esc(p.cantidad)}" placeholder="1"
+            oninput="setP('${p.id}','cantidad',this.value)"></div>
+        <div class="field"><label>Unidad</label>
+          <select onchange="setP('${p.id}','unidad',this.value)">
+            <option value="">—</option>${uni}</select></div>
+        <div class="field"><label>Identificador</label>
+          <input value="${esc(p.serie)}" placeholder="Serie / N.º"
+            oninput="setP('${p.id}','serie',this.value)"></div>
+      </div>
+      <div class="field"><label>Estado de recepción</label>
+        <div class="seg">
+          <button type="button" class="${p.estado==='Conforme'?'sel':''}"
+            onclick="setEstado('${p.id}','Conforme')">Conforme</button>
+          <button type="button" class="${p.estado==='Con observaciones'?'sel':''}"
+            onclick="setEstado('${p.id}','Con observaciones')">Con observaciones</button>
+        </div></div>
+      <div class="field"><label>Observaciones de esta partida</label>
+        <input value="${esc(p.obs)}" placeholder="Opcional"
+          oninput="setP('${p.id}','obs',this.value)"></div>
+      <div class="p-fotos">📷 ${nf} ${nf===1?'foto':'fotos'} asociadas</div>
+    </div>`;
+  }).join('');
+  // fijar el select de unidad
+  ps.forEach((p,i)=>{
+    const sel=document.querySelectorAll('#pt_'+p.id+' select')[0];
+    if(sel) sel.value=p.unidad||'';
+  });
+}
+function agregarPartida(){
+  a.partidas=a.partidas||[];
+  a.partidas.push({id:'p_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+    concepto:'',cantidad:'',unidad:'Pieza',serie:'',estado:'Conforme',obs:''});
+  guardarActa(a); renderPartidas();
+  const el=document.getElementById('partidas').lastElementChild;
+  if(el) el.scrollIntoView({behavior:'smooth',block:'center'});
+}
+function setP(pid,k,v){
+  const p=(a.partidas||[]).find(x=>x.id===pid); if(!p) return;
+  p[k]=v; guardarActa(a);
+  if(k==='concepto'){ const t=document.querySelector('#pt_'+pid+' .p-tit');
+    if(t) t.textContent=v||'Sin concepto'; }
+}
+function setEstado(pid,v){
+  setP(pid,'estado',v);
+  const box=document.getElementById('pt_'+pid);
+  if(box){
+    box.classList.toggle('obs',v==='Con observaciones');
+    box.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('sel',b.textContent===v));
+  }
+}
+async function borrarPartida(pid){
+  const nf=(a.medios||[]).filter(m=>m.partidaId===pid).length;
+  if(!confirm('¿Eliminar esta partida?'+(nf?'\n\nSe borrarán también sus '+nf+' fotos.':''))) return;
+  for(const m of (a.medios||[]).filter(m=>m.partidaId===pid)){
+    try{ await idbDel(m.id); }catch(e){}
+  }
+  a.medios=(a.medios||[]).filter(m=>m.partidaId!==pid);
+  a.partidas=(a.partidas||[]).filter(p=>p.id!==pid);
+  guardarActa(a); renderPartidas();
+}
+
+function siguiente(){ a.pasoDatos=true; guardarActa(a); window.location.href='evidencias.html'; }
+function salir(){ guardarActa(a); window.location.href='index.html'; }
+
+window.addEventListener('online',renderBanners);
+window.addEventListener('offline',renderBanners);
+render();
+</script>
+</body>
+</html>

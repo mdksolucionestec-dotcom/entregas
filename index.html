@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1080">
+<title>MD Actas</title>
+<link rel="stylesheet" href="estilos.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+</head>
+<body>
+<header class="hdr plain">
+  <div class="hdr-row">
+    <div class="logo" id="brandLogo">MD</div>
+    <div class="htxt">
+      <h1>Actas de entrega</h1>
+      <div class="sub">Entrega-recepción · Veracruz</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="banners"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px">
+    <span class="chip" id="countChip">—</span>
+    <button class="btn btn-ghost" style="padding:9px 13px;font-size:13px" onclick="abrirModal()">＋ Nueva</button>
+  </div>
+  <div class="list" id="list"></div>
+</main>
+
+<nav class="navbar">
+  <div class="nav-inner">
+    <button class="btn btn-primary btn-block" onclick="abrirModal()">＋ Nueva acta de entrega</button>
+    <button class="btn btn-ghost btn-block" id="instBtn" style="display:none" onclick="instalar()">📲 Instalar en el teléfono</button>
+    <button class="link-test" id="testBtn" onclick="probar()">Probar conexión con Drive</button>
+  </div>
+</nav>
+
+<div class="sending" id="sendOv">
+  <div class="send-box" id="sendBox">
+    <div class="spin"></div>
+    <div class="check-ic" id="checkIc">✓</div>
+    <h3 id="sendTitle">Procesando…</h3>
+    <p id="sendMsg">Un momento.</p>
+  </div>
+</div>
+
+<!-- Modal nueva acta -->
+<div class="overlay" id="ov" onclick="if(event.target===this)cerrarModal()">
+  <div class="sheet" role="dialog" aria-modal="true">
+    <div class="grab"></div>
+    <h2>Nueva acta de entrega</h2>
+    <p class="sh-sub">Funciona sin internet. El folio se genera al instante.</p>
+
+    <div class="field">
+      <label>Proyecto</label>
+      <input id="m_proyecto" placeholder="Ej. VERACRUZ" autocomplete="off"
+             style="text-transform:uppercase" oninput="previewFolio()">
+    </div>
+    <div class="folio-prev" id="folioPrev">ACT-XXX-###</div>
+
+    <div class="field">
+      <label>Sitio / localidad</label>
+      <input id="m_sitio" placeholder="Ej. Poste Zacamulpan, Poza Rica" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Fecha de entrega</label>
+      <input id="m_fecha" type="date">
+    </div>
+
+    <div class="field">
+      <label>¿Cómo van las fotos?</label>
+      <div class="seg" id="segModo">
+        <button type="button" class="sel" data-v="partida" onclick="setModo('partida')">
+          Por partida<small>Cada equipo con su antes / durante / después</small></button>
+        <button type="button" data-v="general" onclick="setModo('general')">
+          Generales<small>Un solo bloque para todo el sitio</small></button>
+      </div>
+    </div>
+
+    <div class="err" id="mErr"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" style="flex:1" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn btn-primary" style="flex:1.4" id="crearBtn" onclick="crear()">Crear y continuar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+<script>
+let modo='partida';
+function setModo(v){
+  modo=v;
+  document.querySelectorAll('#segModo button').forEach(b=>b.classList.toggle('sel',b.dataset.v===v));
+}
+
+function renderBanners(){
+  const c=document.getElementById('banners');
+  const pend=getActas().filter(a=>!a.enviado && a.listoParaEnviar).length;
+  let h='';
+  if(!online()){
+    h=`<div class="banner off"><span class="b-ic">📴</span>
+      <span>Modo sin conexión. Captura con normalidad: solo el envío a Drive necesita internet.</span></div>`;
+  } else if(pend>0){
+    h=`<div class="banner pend"><span class="b-ic">🔄</span>
+      <span>${pend} ${pend===1?'acta lista':'actas listas'} sin enviar.</span></div>`;
+  } else if(!CONFIGURADO){
+    h=`<div class="banner info"><span class="b-ic">⚙️</span>
+      <span>Falta configurar la URL del Apps Script en app.js. Todo funciona, pero aún no sube a Drive.</span></div>`;
+  }
+  c.innerHTML=h;
+}
+
+function render(){
+  renderBanners();
+  const arr=getActas();
+  document.getElementById('countChip').textContent=arr.length+' '+(arr.length===1?'acta':'actas');
+  const list=document.getElementById('list');
+  if(!arr.length){
+    list.innerHTML=`<div class="empty"><div class="em-ic">📋</div>
+      <h3>Sin actas</h3><p>Crea la primera con el botón de abajo.</p></div>`;
+    return;
+  }
+  const orden=arr.slice().sort((a,b)=>(b.creado||'').localeCompare(a.creado||''));
+  list.innerHTML=orden.map(a=>{
+    const badge = a.enviado ? '<span class="badge badge-sent">✓ Enviada</span>'
+      : (a.listoParaEnviar ? '<span class="badge badge-pend">Por enviar</span>'
+                           : '<span class="badge badge-cap">En captura</span>');
+    const prov = a.folioProvisional ? ' <span class="prov-tag">prov.</span>' : '';
+    return `<div class="item" onclick="abrir('${a.id}')">
+      <div class="it-body">
+        <div class="it-folio">${esc(a.folio)}${prov}</div>
+        <div class="it-sitio">${esc(a.sitio||a.proyecto||'—')}</div>
+        <div class="it-meta"><span>📅 ${fmtFecha(a.fecha)}</span>
+          <span>📦 ${(a.partidas||[]).length} partidas</span></div>
+      </div>
+      <div class="it-side">${badge}<span class="chip">📷 ${totalFotos(a)}</span></div>
+      <div class="it-acciones">
+        ${a.enviado?`<button class="ico-btn" aria-label="Reenviar"
+          onclick="event.stopPropagation(); reenviar('${a.id}')">☁️</button>`:''}
+        <button class="ico-btn" aria-label="Eliminar"
+          onclick="event.stopPropagation(); borrar('${a.id}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function abrir(id){
+  sessionStorage.setItem('mdk_acta_id',id);
+  const a=getActa(id);
+  window.location.href = (a && a.pasoDatos) ? 'evidencias.html' : 'acta.html';
+}
+
+async function borrar(id){
+  const a=getActa(id); if(!a) return;
+  const nf=totalFotos(a);
+  const det=nf?'\n\nSe eliminarán también '+nf+(nf===1?' foto':' fotos')+' del teléfono.':'';
+  const av=a.enviado?'\n\nYa fue enviada; lo que está en Drive no se toca.'
+                    :'\n\n⚠️ Esta acta NO se ha enviado. Se pierde todo lo capturado.';
+  if(!confirm('¿Eliminar '+a.folio+'?'+av+det)) return;
+  if(!a.enviado && !confirm('Confirma otra vez: se borra definitivamente.')) return;
+  await borrarActa(id); render();
+}
+
+function ov(t,m,estado){
+  const box=document.getElementById('sendBox');
+  box.classList.toggle('done',!!estado);
+  const ic=document.getElementById('checkIc');
+  ic.textContent=estado==='err'?'⚠️':'✓';
+  ic.style.color=estado==='err'?'#c62828':'#1f9d55';
+  document.getElementById('sendTitle').textContent=t;
+  document.getElementById('sendMsg').textContent=m;
+  document.getElementById('sendOv').classList.add('on');
+}
+function ocultarOv(){ document.getElementById('sendOv').classList.remove('on'); }
+
+async function reenviar(id){
+  const a=getActa(id); if(!a) return;
+  if(!online()){ alert('Necesitas internet para reenviar a Drive.'); return; }
+  if(!confirm('¿Reenviar '+a.folio+' a Drive?\n\nÚtil si faltaron fotos. Se sube todo a la misma carpeta, sin duplicar.')) return;
+  try{
+    await enviarActa(a,ov);
+    a.fechaEnvio=new Date().toISOString(); guardarActa(a);
+    ov('¡Reenviada!','Verifica en Drive que ya estén todas las fotos.',true);
+    setTimeout(()=>{ ocultarOv(); render(); },2200);
+  }catch(e){
+    ov('No se pudo reenviar','Revisa tu conexión e inténtalo otra vez.','err');
+    setTimeout(ocultarOv,3500);
+  }
+}
+
+function previewFolio(){
+  const p=document.getElementById('m_proyecto').value.trim();
+  document.getElementById('folioPrev').textContent = p ? 'ACT-'+siglas(p)+'-###' : 'ACT-XXX-###';
+}
+function abrirModal(){
+  document.getElementById('mErr').textContent='';
+  if(!document.getElementById('m_fecha').value)
+    document.getElementById('m_fecha').value=new Date().toISOString().slice(0,10);
+  previewFolio();
+  document.getElementById('ov').classList.add('open');
+}
+function cerrarModal(){ document.getElementById('ov').classList.remove('open'); }
+
+async function crear(){
+  const proyecto=document.getElementById('m_proyecto').value.trim().toUpperCase();
+  const sitio=document.getElementById('m_sitio').value.trim();
+  const fecha=document.getElementById('m_fecha').value;
+  const err=document.getElementById('mErr');
+  if(!proyecto || !sitio){ err.textContent='Proyecto y sitio son obligatorios.'; return; }
+  const btn=document.getElementById('crearBtn');
+  btn.disabled=true; btn.textContent='Generando folio…';
+  const a=await crearActa({proyecto,sitio,fecha,modalidad:modo});
+  if(!guardarActa(a)){ btn.disabled=false; btn.textContent='Crear y continuar'; return; }
+  sessionStorage.setItem('mdk_acta_id',a.id);
+  window.location.href='acta.html';
+}
+
+async function probar(){
+  const b=document.getElementById('testBtn');
+  b.textContent='Probando…'; b.disabled=true;
+  const r=await probarConexion();
+  b.disabled=false; b.textContent='Probar conexión con Drive';
+  alert((r.ok?'✅ Conexión correcta\n\n':'❌ Todavía no funciona\n\n')+r.msg);
+}
+
+/* instalar */
+let promptInst=null;
+const yaInst=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); promptInst=e;
+  if(!yaInst) document.getElementById('instBtn').style.display='inline-flex'; });
+window.addEventListener('appinstalled',()=>{ promptInst=null;
+  document.getElementById('instBtn').style.display='none'; });
+function esIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+async function instalar(){
+  if(promptInst){ promptInst.prompt(); await promptInst.userChoice; promptInst=null;
+    document.getElementById('instBtn').style.display='none'; return; }
+  alert(esIOS()
+    ? 'Para instalarla en iPhone:\n\n1. Toca Compartir\n2. Elige "Agregar a pantalla de inicio"\n3. Toca Agregar'
+    : 'Para instalarla:\n\n1. Abre el menú del navegador (⋮)\n2. Elige "Instalar aplicación"');
+}
+if(esIOS() && !yaInst) window.addEventListener('load',()=>{
+  document.getElementById('instBtn').style.display='inline-flex'; });
+
+if(LOGO) document.getElementById('brandLogo').innerHTML='<img src="'+LOGO+'" alt="MD">';
+window.addEventListener('online',render);
+window.addEventListener('offline',render);
+render();
+</script>
+</body>
+</html>
